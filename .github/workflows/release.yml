@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,14 +15,32 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Verify version consistency
+      - name: Resolve version source
+        id: ver
         run: |
           PROP_VER=$(grep '^version=' module.prop | cut -d= -f2)
           PROP_VC=$(grep '^versionCode=' module.prop | cut -d= -f2)
+          echo "prop_ver=${PROP_VER}" >> "$GITHUB_OUTPUT"
+          echo "prop_vc=${PROP_VC}" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # push to master / workflow_dispatch — release by module.prop version
+            echo "tag=${PROP_VER}" >> "$GITHUB_OUTPUT"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify version consistency (tag only)
+        if: github.ref_type == 'tag'
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PROP_VER="${{ steps.ver.outputs.prop_ver }}"
+          PROP_VC="${{ steps.ver.outputs.prop_vc }}"
           JSON_VER=$(python3 -c "import json; print(json.load(open('update.json'))['version'])")
           JSON_VC=$(python3 -c "import json; print(json.load(open('update.json'))['versionCode'])")
           ZIP_URL=$(python3 -c "import json; print(json.load(open('update.json'))['zipUrl'])")
-          TAG="${GITHUB_REF_NAME}"
           ERRORS=0
           [ "${TAG}" != "${PROP_VER}" ] && echo "::error::Tag ${TAG} != module.prop version ${PROP_VER}" && ERRORS=$((ERRORS+1))
           [ "${TAG}" != "${JSON_VER}" ] && echo "::error::Tag ${TAG} != update.json version ${JSON_VER}" && ERRORS=$((ERRORS+1))
@@ -30,6 +49,20 @@ jobs:
           grep -q "^## ${TAG}$" CHANGELOG.md || { echo "::error::CHANGELOG.md missing section for ${TAG}"; ERRORS=$((ERRORS+1)); }
           [ "${ERRORS}" -gt 0 ] && exit 1
           echo "All version checks passed"
+
+      - name: Verify version consistency (branch / dispatch)
+        if: github.ref_type != 'tag'
+        run: |
+          PROP_VER="${{ steps.ver.outputs.prop_ver }}"
+          PROP_VC="${{ steps.ver.outputs.prop_vc }}"
+          JSON_VER=$(python3 -c "import json; print(json.load(open('update.json'))['version'])")
+          JSON_VC=$(python3 -c "import json; print(json.load(open('update.json'))['versionCode'])")
+          ERRORS=0
+          [ "${PROP_VER}" != "${JSON_VER}" ] && echo "::error::module.prop version ${PROP_VER} != update.json version ${JSON_VER}" && ERRORS=$((ERRORS+1))
+          [ "${PROP_VC}" != "${JSON_VC}" ] && echo "::error::module.prop versionCode ${PROP_VC} != update.json versionCode ${JSON_VC}" && ERRORS=$((ERRORS+1))
+          grep -q "^## ${PROP_VER}$" CHANGELOG.md || echo "::warning::CHANGELOG.md has no section for ${PROP_VER}"
+          [ "${ERRORS}" -gt 0 ] && exit 1
+          echo "Version consistency OK (non-tag build)"
 
       - name: ShellCheck
         run: |
@@ -53,12 +86,15 @@ jobs:
 
       - name: Verify zip contents
         run: |
-          unzip -l *.zip
+          unzip -l ./*.zip
           # Fail if dev files leaked into zip
-          unzip -l *.zip | grep -qE '\.git/|Makefile|README\.md' \
-            && { echo "::error::Dev files found in zip"; exit 1; } || true
+          if unzip -l ./*.zip | grep -qE '\.git/|Makefile|README\.md'; then
+            echo "::error::Dev files found in zip"
+            exit 1
+          fi
 
       - name: Extract release notes from CHANGELOG.md
+        if: github.ref_type == 'tag'
         run: |
           awk -v tag="## ${GITHUB_REF_NAME}" '
             $0 == tag { found=1; next }
@@ -66,8 +102,17 @@ jobs:
             found { print }
           ' CHANGELOG.md > /tmp/release-notes.txt
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (tag push)
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           body_path: /tmp/release-notes.txt
           files: '*.zip'
+
+      - name: Upload build artifact (branch / dispatch)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip-${{ steps.ver.outputs.prop_ver }}
+          path: '*.zip'
+          if-no-files-found: error
