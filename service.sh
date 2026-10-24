@@ -154,9 +154,11 @@ if $HAS_IP; then
         log_msg "IPv4 upstream: dev=$UP4 table=$T4"
         for IFACE in $IFACES; do
             ip rule del from all iif "$IFACE" lookup "$T4" priority 5000 2>/dev/null
-            ip rule add from all iif "$IFACE" lookup "$T4" priority 5000 2>/dev/null \
-                && log_msg "rule4 add ok: $IFACE -> $T4" \
-                || log_msg "rule4 add FAIL: $IFACE -> $T4"
+            if ip rule add from all iif "$IFACE" lookup "$T4" priority 5000 2>/dev/null; then
+                log_msg "rule4 add ok: $IFACE -> $T4"
+            else
+                log_msg "rule4 add FAIL: $IFACE -> $T4"
+            fi
         done
     fi
 
@@ -170,9 +172,11 @@ if $HAS_IP; then
         log_msg "IPv6 upstream: dev=$UP6 table=$T6"
         for IFACE in $IFACES; do
             ip -6 rule del from all iif "$IFACE" lookup "$T6" priority 5000 2>/dev/null
-            ip -6 rule add from all iif "$IFACE" lookup "$T6" priority 5000 2>/dev/null \
-                && log_msg "rule6 add ok: $IFACE -> $T6" \
-                || log_msg "rule6 add FAIL: $IFACE -> $T6"
+            if ip -6 rule add from all iif "$IFACE" lookup "$T6" priority 5000 2>/dev/null; then
+                log_msg "rule6 add ok: $IFACE -> $T6"
+            else
+                log_msg "rule6 add FAIL: $IFACE -> $T6"
+            fi
         done
     fi
 fi
